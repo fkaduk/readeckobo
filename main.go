@@ -120,6 +120,48 @@ type app struct {
 	nickelStatusPath string
 }
 
+type downloadRun struct {
+	group        errgroup.Group
+	download     func(readeckBookmark) (bool, error)
+	filesChanged atomic.Bool
+	failures     chan error
+}
+
+func newDownloadRun(workerLimit, maxDownloads int, download func(readeckBookmark) (bool, error)) *downloadRun {
+	run := &downloadRun{
+		download: download,
+		failures: make(chan error, maxDownloads),
+	}
+	run.group.SetLimit(workerLimit)
+	return run
+}
+
+func (run *downloadRun) start(entry readeckBookmark) {
+	run.group.Go(func() error {
+		changed, err := run.download(entry)
+		if changed {
+			run.filesChanged.Store(true)
+		}
+		if err != nil {
+			run.failures <- fmt.Errorf("bookmark %s: %w", entry.ID, err)
+		}
+		// Failures are collected above so the group only controls concurrency
+		// and completion rather than discarding all but its first error.
+		return nil
+	})
+}
+
+// wait completes the download run and may only be called once.
+func (run *downloadRun) wait() (bool, error) {
+	waitErr := run.group.Wait()
+	close(run.failures)
+	var failures []error
+	for err := range run.failures {
+		failures = append(failures, err)
+	}
+	return run.filesChanged.Load(), errors.Join(errors.Join(failures...), waitErr)
+}
+
 func newApp(cfg appConfig) app {
 	client := &http.Client{
 		Timeout: time.Duration(cfg.Server.Timeout) * time.Second,
@@ -220,9 +262,10 @@ func (a app) sync(sigc <-chan os.Signal) error {
 		}
 	}
 
-	var g errgroup.Group
-	g.SetLimit(a.cfg.Fetch.Workers)
-	var filesChanged atomic.Bool
+	downloads := newDownloadRun(a.cfg.Fetch.Workers, len(entries), func(entry readeckBookmark) (bool, error) {
+		return a.readeck.downloadBookmarkFile(a.cfg.Output, entry)
+	})
+	filesChanged := false
 	cancelled := false
 
 	for _, entry := range entries {
@@ -238,19 +281,17 @@ func (a app) sync(sigc <-chan os.Signal) error {
 		default:
 		}
 		debugf(a.cfg.Log.Verbose, "dispatching %s", entry.ID)
-		g.Go(func() error {
-			changed, err := a.readeck.downloadBookmarkFile(a.cfg.Output, entry)
-			if changed {
-				filesChanged.Store(true)
-			}
-			return err
-		})
+		downloads.start(entry)
 	}
 done:
 	var syncErr error
-	if err := g.Wait(); err != nil {
+	downloadsChanged, err := downloads.wait()
+	if err != nil {
 		log.Println("download error:", err)
 		syncErr = errors.Join(syncErr, fmt.Errorf("downloads failed: %w", err))
+	}
+	if downloadsChanged {
+		filesChanged = true
 	}
 	select {
 	case sig := <-sigc:
@@ -265,10 +306,10 @@ done:
 		syncErr = errors.Join(syncErr, err)
 	}
 	if changed {
-		filesChanged.Store(true)
+		filesChanged = true
 	}
 
-	if filesChanged.Load() {
+	if filesChanged {
 		if err := nickelRescan(a.nickelStatusPath); err != nil {
 			log.Printf("nickel rescan failed: %v", err)
 			syncErr = errors.Join(syncErr, fmt.Errorf("nickel rescan failed: %w", err))
@@ -650,6 +691,11 @@ func reconcileLocalBook(
 		}
 	}
 	if allowDelete && !valid[uid] {
+		// Keep the local book as retry input whenever its remote state may not
+		// have been reconciled successfully.
+		if reconcileErr != nil {
+			return false, reconcileErr
+		}
 		if status == bookReading || status == bookClosed {
 			log.Printf("not deleting book currently being read: %s", book.path)
 		} else if err := os.Remove(book.path); err != nil {

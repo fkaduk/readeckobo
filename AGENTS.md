@@ -8,7 +8,9 @@
 - Handle errors explicitly, preserving causes and earlier failures, and explain intentionally ignored errors
 - Keep concurrency bounded and make synchronization, cancellation, and completion explicit
 - Test observable behavior and relevant failures and add regression tests for bug fixes when practical
+- Structure tests with explicit `Given`, `When`, and `Then` sections
 - Keep important inputs and expected outcomes visible and hide only mechanical test setup
+- Define test helpers before the tests that use them
 
 ## Go
 

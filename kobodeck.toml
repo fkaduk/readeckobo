@@ -31,8 +31,10 @@ Verbose = false
 Size = 1
 
 [Output]
-# Directory to store downloaded (K)EPUB files
+# Directory dedicated to Kobodeck-downloaded (K)EPUB files
 # If it does not exist, it will be created
 Path = "/mnt/onboard/kobodeck"
-# Delete local EPUBs that are no longer in the unread feed or over the Fetch.Limit
+# Delete every top-level *.kepub.epub that is absent from the fetched feed,
+# including books excluded by Fetch filters or Fetch.Limit
+# Do not enable this for a directory containing unrelated books
 Delete = false

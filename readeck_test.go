@@ -15,6 +15,7 @@ import (
 )
 
 func TestListBookmarksPaginatesFiltersAndAppliesLimit(t *testing.T) {
+	// Given
 	var offsets []string
 	simulatedReadeckServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		offsets = append(offsets, r.URL.Query().Get("offset"))
@@ -35,8 +36,9 @@ func TestListBookmarksPaginatesFiltersAndAppliesLimit(t *testing.T) {
 	}))
 	t.Cleanup(simulatedReadeckServer.Close)
 	client := newReadeckClient(simulatedReadeckServer.Client(), serverConfig{URL: simulatedReadeckServer.URL}, false)
-
+	// When
 	entries, err := client.listBookmarks(fetchConfig{Limit: 101, Status: "unread"})
+	// Then
 	if err != nil {
 		t.Fatalf("listBookmarks: %v", err)
 	}
@@ -49,6 +51,7 @@ func TestListBookmarksPaginatesFiltersAndAppliesLimit(t *testing.T) {
 }
 
 func TestDownloadSkipsExistingKepub(t *testing.T) {
+	// Given
 	var requests atomic.Int32
 	simulatedReadeckServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
@@ -61,8 +64,9 @@ func TestDownloadSkipsExistingKepub(t *testing.T) {
 	original := writeTestEPUB(t, path)
 	cfg := appConfig{Server: serverConfig{URL: simulatedReadeckServer.URL, Token: "test-token"}, Output: outputConfig{Path: outputDir}}
 	readeck := newReadeckClient(simulatedReadeckServer.Client(), cfg.Server, cfg.Log.Verbose)
-
+	// When
 	changed, err := readeck.downloadBookmarkFile(cfg.Output, readeckBookmark{ID: nativeTestBookmarkID, Updated: time.Now()})
+	// Then
 	if err != nil {
 		t.Fatalf("download existing bookmark: %v", err)
 	}
@@ -82,6 +86,7 @@ func TestDownloadSkipsExistingKepub(t *testing.T) {
 }
 
 func TestDownloadDoesNotSkipInvalidExistingKepub(t *testing.T) {
+	// Given
 	var requests atomic.Int32
 	simulatedReadeckServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
@@ -96,8 +101,9 @@ func TestDownloadDoesNotSkipInvalidExistingKepub(t *testing.T) {
 	}
 	cfg := appConfig{Server: serverConfig{URL: simulatedReadeckServer.URL, Token: "test-token"}, Output: outputConfig{Path: outputDir}}
 	readeck := newReadeckClient(simulatedReadeckServer.Client(), cfg.Server, cfg.Log.Verbose)
-
+	// When
 	_, err := readeck.downloadBookmarkFile(cfg.Output, readeckBookmark{ID: nativeTestBookmarkID})
+	// Then
 	if err == nil {
 		t.Fatal("download with failed HTTP response unexpectedly succeeded")
 	}
@@ -107,6 +113,7 @@ func TestDownloadDoesNotSkipInvalidExistingKepub(t *testing.T) {
 }
 
 func TestDownloadInstallsKepubUsingBookmarkID(t *testing.T) {
+	// Given
 	sourcePath := filepath.Join(t.TempDir(), "source.epub")
 	epub := writeTestEPUB(t, sourcePath)
 	simulatedReadeckServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -124,8 +131,9 @@ func TestDownloadInstallsKepubUsingBookmarkID(t *testing.T) {
 	cfg := appConfig{Server: serverConfig{URL: simulatedReadeckServer.URL, Token: "test-token"}, Output: outputConfig{Path: outputDir}}
 	readeck := newReadeckClient(simulatedReadeckServer.Client(), cfg.Server, cfg.Log.Verbose)
 	wantPath := filepath.Join(outputDir, nativeTestBookmarkID+".kepub.epub")
-
+	// When
 	changed, err := readeck.downloadBookmarkFile(cfg.Output, readeckBookmark{ID: nativeTestBookmarkID, Updated: time.Now()})
+	// Then
 	if err != nil {
 		t.Fatalf("download bookmark: %v", err)
 	}
@@ -141,14 +149,16 @@ func TestDownloadInstallsKepubUsingBookmarkID(t *testing.T) {
 }
 
 func TestDownloadRejectsUnsafeBookmarkID(t *testing.T) {
+	// Given
 	var requests atomic.Int32
 	simulatedReadeckServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { requests.Add(1) }))
 	t.Cleanup(simulatedReadeckServer.Close)
 	outputDir := t.TempDir()
 	cfg := appConfig{Server: serverConfig{URL: simulatedReadeckServer.URL, Token: "test-token"}, Output: outputConfig{Path: outputDir}}
 	readeck := newReadeckClient(simulatedReadeckServer.Client(), cfg.Server, cfg.Log.Verbose)
-
+	// When
 	_, err := readeck.downloadBookmarkFile(cfg.Output, readeckBookmark{ID: "../escape"})
+	// Then
 	if err == nil {
 		t.Fatal("unsafe bookmark ID unexpectedly accepted")
 	}
@@ -158,13 +168,15 @@ func TestDownloadRejectsUnsafeBookmarkID(t *testing.T) {
 }
 
 func TestAPIResponseSizeLimit(t *testing.T) {
+	// Given
 	simulatedReadeckServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Length", strconv.Itoa(maxAPIResponseSize+1))
 	}))
 	t.Cleanup(simulatedReadeckServer.Close)
 	readeck := newReadeckClient(simulatedReadeckServer.Client(), serverConfig{URL: simulatedReadeckServer.URL}, false)
-
+	// When
 	_, err := readeck.doAPIRequest(http.MethodGet, simulatedReadeckServer.URL, nil)
+	// Then
 	if err == nil || !strings.Contains(err.Error(), "exceeds") {
 		t.Fatalf("oversized API response error = %v, want size-limit error", err)
 	}

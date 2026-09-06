@@ -20,6 +20,10 @@ import (
 // Prefers the first res-* JPEG/PNG content image, falls back to icon-* favicon.
 // This will show that image as article cover on the Kobo.
 func fixCover(path string) error {
+	return fixCoverWithRename(path, os.Rename)
+}
+
+func fixCoverWithRename(path string, renameFile func(oldPath, newPath string) error) error {
 	r, err := zip.OpenReader(path)
 	if err != nil {
 		return err
@@ -51,11 +55,14 @@ func fixCover(path string) error {
 	log.Printf("  cover fixed: %s -> %s", filepath.Base(path), source.Href)
 
 	tmp := path + ".covertmp"
+	defer removeWithWarning(tmp)
 	if err := writeCoverEPUB(r, tmp, opfPath, patchedOPF); err != nil {
-		removeWithWarning(tmp)
 		return err
 	}
-	return os.Rename(tmp, path)
+	if err := renameFile(tmp, path); err != nil {
+		return fmt.Errorf("install cover-fixed EPUB: %w", err)
+	}
+	return nil
 }
 
 type coverManifestItem struct {

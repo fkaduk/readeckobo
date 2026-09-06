@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestNickelReadStatusUsesSchemaFixture(t *testing.T) {
+func TestNickelReadStatusReadsKnownStatusesFromNickelSchema(t *testing.T) {
 	// Given
 	db := openNickelSchemaFixture(t)
 	outputDir := t.TempDir()
@@ -26,10 +26,8 @@ func TestNickelReadStatusUsesSchemaFixture(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			// Given
 			insertNickelContent(t, db, outputDir, test.id, test.want)
-
 			// When
 			got, err := nickelReadStatus(db, test.id, outputDir, false)
-
 			// Then
 			if err != nil {
 				t.Fatalf("nickelReadStatus: %v", err)
@@ -44,10 +42,8 @@ func TestNickelReadStatusUsesSchemaFixture(t *testing.T) {
 func TestNickelReadStatusMissingBookIsUnread(t *testing.T) {
 	// Given
 	db := openNickelSchemaFixture(t)
-
 	// When
 	got, err := nickelReadStatus(db, "missing", t.TempDir(), false)
-
 	// Then
 	if err != nil {
 		t.Fatalf("nickelReadStatus: %v", err)
@@ -63,10 +59,8 @@ func TestNickelIsInCollectionUsesSchemaFixture(t *testing.T) {
 	outputDir := t.TempDir()
 	insertNickelContent(t, db, outputDir, nativeTestBookmarkID, bookUnread)
 	insertNickelCollection(t, db, outputDir, nativeTestBookmarkID, nativeTestFavouriteShelf)
-
 	// When
 	got, err := nickelIsInCollection(db, nativeTestBookmarkID, outputDir, nativeTestFavouriteShelf)
-
 	// Then
 	if err != nil {
 		t.Fatalf("nickelIsInCollection: %v", err)

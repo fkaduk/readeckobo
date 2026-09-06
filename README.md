@@ -1,6 +1,7 @@
 # Kobodeck
 
 [![CI](https://github.com/fkaduk/kobodeck/actions/workflows/ci.yml/badge.svg)](https://github.com/fkaduk/kobodeck/actions/workflows/ci.yml)
+[![Coverage](https://codecov.io/gh/fkaduk/kobodeck/graph/badge.svg)](https://app.codecov.io/gh/fkaduk/kobodeck)
 [![Go version](https://img.shields.io/github/go-mod/go-version/fkaduk/kobodeck)](go.mod)
 [![Latest release](https://img.shields.io/github/v/tag/fkaduk/kobodeck?sort=semver&label=release)](https://github.com/fkaduk/kobodeck/releases/latest)
 [![License](https://img.shields.io/github/license/fkaduk/kobodeck)](LICENSE)
@@ -55,7 +56,7 @@ to prevent Kobodeck from being suspended.
 ## Prerequisites
 
 - a running [hosted](https://readeck.com) or
-  [self-hosted](https://readeck.org/en/) Readeck instance
+  [self-hosted](https://readeck.org/en/) Readeck instance (latest)
 - a Readeck API token (generate in Readeck under Settings → API tokens)
 - a Kobo device running the stock Nickel firmware
   (tested on Kobo Libra Colour; other Glo-generation and newer devices may work
@@ -78,6 +79,17 @@ To install or upgrade
    `KoboRoot.tgz`
 
 Logs are written to `.adds/kobodeck/kobodeck.log` on the device.
+
+### Output directory and deletion
+
+`Output.Path` must be a directory dedicated to Kobodeck downloads. Kobodeck
+treats every top-level `*.kepub.epub` in that directory as a Readeck article,
+using the filename without `.kepub.epub` as the bookmark ID.
+
+When `Output.Delete` is enabled, Kobodeck deletes those files if they are absent
+from the current fetched feed. This includes articles excluded by `Fetch.Labels`,
+`Fetch.Status`, or `Fetch.Limit`. Do not enable deletion for a directory that
+contains unrelated books.
 
 ## Uninstall
 
@@ -116,8 +128,10 @@ with FAT32 storage and executes Kobodeck against a real Readeck instance.
 Run the native tests with `make test`.
 
 To run the end-to-end test, install the necessary dependencies
-(QEMU, Docker, `cpio`, and `dosfstools`)
+(QEMU, Docker, `cpio`, `dosfstools`, and `mtools`)
 and execute `make test-e2e`.
+The test intentionally uses `readeck:latest` to catch compatibility problems
+with the version users are most likely to deploy.
 
 ### Known issues and limitations
 
@@ -143,6 +157,14 @@ Kobodeck does not normalize this hybrid markup. Before running `kepubify`, it
 only patches the package metadata to designate the first suitable article
 image or the favicon as the cover.
 
+Kobodeck downloads the source EPUB to a temporary file in `Output.Path`. It
+converts into another same-directory temporary file, syncs and validates that
+KEPUB, then atomically renames it into place. A failed or interrupted conversion
+therefore does not replace an existing KEPUB, and an invalid installed KEPUB is
+redownloaded instead of being treated as complete. The temporary source EPUB is
+removed after both successful and failed conversions, so it is not retained for
+debugging or a later retry.
+
 Possible improvements:
 
 - Normalize Readeck's EPUB 2/HTML5 hybrid output into a consistent EPUB 3 book
@@ -151,15 +173,12 @@ Possible improvements:
   better fixed upstream.
 - Improve cover selection, for example by preferring the lead or largest image,
   and optionally generate a fallback cover.
-- Write downloads and converted books to temporary files and rename them
-  atomically. An interrupted conversion can currently leave a non-empty partial
-  KEPUB that future runs will treat as complete.
 - Option to preserve the downloaded EPUB when KEPUB conversion fails.
 
 #### Synchronization
 
-- Already downloaded articles are never refreshed when their Readeck content
-  changes or the local file is corrupted.
+- Valid downloaded articles are not refreshed when their Readeck content
+  changes. Invalid local KEPUBs are redownloaded automatically.
   To force a re-download, delete the file from `Output.Path`.
 - If you enable `Sync.FavouriteCollection` in Kobodeck, the respective
   collection will serve as ground truth and will override changes

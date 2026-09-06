@@ -14,8 +14,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
@@ -36,18 +38,18 @@ jobs:
 
   vm-test:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0 # needed for git describe
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
       - name: Install system-emulation tools
-        run: sudo apt-get update && sudo apt-get install -y qemu-system-arm cpio dosfstools
-      - uses: actions/cache@v4
+        run: sudo apt-get update && sudo apt-get install -y qemu-system-arm cpio dosfstools mtools
+      - uses: actions/cache@v5
         with:
           path: .cache/kobodeck-testvm
           key: kobodeck-testvm-${{ runner.os }}-${{ hashFiles('vm_test.sh', 'vm_test_guest.sh') }}
@@ -55,19 +57,51 @@ jobs:
             kobodeck-testvm-${{ runner.os }}-
       - name: Run ARM VM end-to-end release test
         run: make test-e2e
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: KoboRoot
           path: build/KoboRoot.tgz
 
+  coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # needed for git describe
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install system-emulation tools
+        run: sudo apt-get update && sudo apt-get install -y qemu-system-arm cpio dosfstools mtools
+      - uses: actions/cache@v5
+        with:
+          path: .cache/kobodeck-testvm
+          key: kobodeck-testvm-${{ runner.os }}-${{ hashFiles('vm_test.sh', 'vm_test_guest.sh') }}
+          restore-keys: |
+            kobodeck-testvm-${{ runner.os }}-
+      - name: Run native and ARM coverage tests
+        run: make coverage
+      - name: Upload coverage report
+        uses: codecov/codecov-action@v5.5.5
+        with:
+          disable_search: true
+          fail_ci_if_error: true
+          files: build/coverage.out
+          use_oidc: true
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [check, vm-test]
+    needs: [check, vm-test, coverage]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: KoboRoot
       - run: gh release create ${{ github.ref_name }} KoboRoot.tgz --repo ${{ github.repository }} --generate-notes

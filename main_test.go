@@ -2,15 +2,17 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"log"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
-func generateValidAppConfig(outputPath string) appConfig {
+func newValidAppConfig(outputPath string) appConfig {
 	return appConfig{
 		Server: serverConfig{URL: "https://readeck.example/api", Token: "token", Timeout: 5},
 		Fetch:  fetchConfig{Workers: 2, Limit: 10, Status: "unread,reading"},
@@ -20,6 +22,7 @@ func generateValidAppConfig(outputPath string) appConfig {
 }
 
 func TestAppConfigValidation(t *testing.T) {
+	// Given
 	outputPath := t.TempDir()
 	tests := []struct {
 		name   string
@@ -43,9 +46,11 @@ func TestAppConfigValidation(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := generateValidAppConfig(outputPath)
+			cfg := newValidAppConfig(outputPath)
 			tt.mutate(&cfg)
+			// When
 			err := cfg.validate()
+			// Then
 			if tt.valid && err != nil {
 				t.Fatalf("validate() returned unexpected error: %v", err)
 			}
@@ -57,17 +62,21 @@ func TestAppConfigValidation(t *testing.T) {
 }
 
 func TestSetupLoggingUsesConfigDirectory(t *testing.T) {
+	// Given
 	configDir := t.TempDir()
 	configPath := filepath.Join(configDir, "custom.toml")
+	// When
 	setupLogging(appConfig{Log: logConfig{Size: 1}}, configPath)
 	defer log.SetOutput(io.Discard)
 	log.Print("custom config logging test")
+	// Then
 	if _, err := os.Stat(filepath.Join(configDir, "kobodeck.log")); err != nil {
 		t.Fatalf("custom config log was not created: %v", err)
 	}
 }
 
 func TestRunCheckMode(t *testing.T) {
+	// Given
 	outputDir := t.TempDir()
 	cfg := appConfig{
 		Server: serverConfig{URL: "https://readeck.example", Timeout: 5},
@@ -78,11 +87,12 @@ func TestRunCheckMode(t *testing.T) {
 		{ID: "included", Title: "Included article", Labels: []string{"TECH"}},
 		{ID: "excluded", Title: "Excluded article", Labels: []string{"news"}},
 	}
-
+	// When
 	var output bytes.Buffer
 	if err := writeCheckOutput(&output, cfg, bookmarks); err != nil {
 		t.Fatal(err)
 	}
+	// Then
 	text := output.String()
 	for _, fragment := range []string{
 		"Configuration:",
@@ -112,7 +122,46 @@ func TestRunCheckMode(t *testing.T) {
 	}
 }
 
+func TestDownloadRunPreservesAllBookmarkFailures(t *testing.T) {
+	// Given
+	firstErr := errors.New("first download failed")
+	secondErr := errors.New("second download failed")
+	var completed atomic.Int32
+	run := newDownloadRun(2, 3, func(entry readeckBookmark) (bool, error) {
+		completed.Add(1)
+		switch entry.ID {
+		case "first":
+			return false, firstErr
+		case "second":
+			return false, secondErr
+		default:
+			return true, nil
+		}
+	})
+	for _, id := range []string{"first", "successful", "second"} {
+		run.start(readeckBookmark{ID: id})
+	}
+	// When
+	filesChanged, err := run.wait()
+	// Then
+	if !errors.Is(err, firstErr) || !errors.Is(err, secondErr) {
+		t.Fatalf("download error = %v, want both failures", err)
+	}
+	for _, bookmarkID := range []string{"first", "second"} {
+		if !strings.Contains(err.Error(), "bookmark "+bookmarkID) {
+			t.Errorf("download error does not identify bookmark %s: %v", bookmarkID, err)
+		}
+	}
+	if got := completed.Load(); got != 3 {
+		t.Fatalf("completed downloads = %d, want 3", got)
+	}
+	if !filesChanged {
+		t.Fatal("successful download was not reported as a filesystem change")
+	}
+}
+
 func TestAcquireLockRejectsSecondProcess(t *testing.T) {
+	// Given
 	lockFilePath := filepath.Join(t.TempDir(), "kobodeck.lock")
 	first, err := acquireLock(lockFilePath)
 	if err != nil {
@@ -123,7 +172,9 @@ func TestAcquireLockRejectsSecondProcess(t *testing.T) {
 			t.Errorf("close first lock: %v", err)
 		}
 	})
+	// When
 	second, err := acquireLock(lockFilePath)
+	// Then
 	if second != nil {
 		if closeErr := second.Close(); closeErr != nil {
 			t.Errorf("close second lock: %v", closeErr)
@@ -136,6 +187,8 @@ func TestAcquireLockRejectsSecondProcess(t *testing.T) {
 }
 
 func TestListLocalBooksOnlyListsKepubsInOutputDirectory(t *testing.T) {
+	// Important: Files outside Kobodeck's output directory must not become deletion candidates
+	// Given
 	outputDir := t.TempDir()
 	kepubPath := filepath.Join(outputDir, "bookmark-1.kepub.epub")
 	if err := os.WriteFile(kepubPath, []byte("kepub"), 0o600); err != nil {
@@ -151,8 +204,9 @@ func TestListLocalBooksOnlyListsKepubsInOutputDirectory(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(nestedDir, "nested.kepub.epub"), []byte("kepub"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-
+	// When
 	books, err := listLocalBooks(outputDir)
+	// Then
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,11 +219,14 @@ func TestListLocalBooksOnlyListsKepubsInOutputDirectory(t *testing.T) {
 }
 
 func TestNickelRescanReportsEventFailure(t *testing.T) {
+	// Given
 	nickelStatusPath := filepath.Join(t.TempDir(), "nickel-status")
 	if err := os.Mkdir(nickelStatusPath, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	// When
 	err := nickelRescan(nickelStatusPath)
+	// Then
 	if err == nil || !strings.Contains(err.Error(), "add event: open "+nickelStatusPath) {
 		t.Fatalf("nickelRescan() error = %v", err)
 	}

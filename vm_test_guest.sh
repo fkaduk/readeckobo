@@ -10,6 +10,8 @@ log=/mnt/onboard/.adds/kobodeck/kobodeck.log
 nickel_status=/tmp/nickel-hardware-status
 binary=/usr/local/bin/kobodeck
 rule=/etc/udev/rules.d/90-kobodeck.rules
+coverage_dir=
+coverage_counter_count=0
 
 fail() {
 	echo "KOBODECK_VM_ERROR: $*"
@@ -61,12 +63,40 @@ install_test_payload() {
 	echo "KOBODECK_VM: installing test dependencies and release"
 	apk add --initdb eudev sqlite || fail "install eudev and sqlite"
 	tar -xzf /test/KoboRoot.tgz -C / || fail "install KoboRoot.tgz"
+	if [ -f /test/90-kobodeck-cover.rules ]; then
+		echo "KOBODECK_VM: enabling test-only coverage collection"
+		coverage_dir=/mnt/onboard/kobodeck-coverdata
+		mkdir -p "$coverage_dir" || fail "create coverage directory"
+		cp /test/90-kobodeck-cover.rules "$rule" || fail "install coverage udev rule"
+	fi
 	mkdir -p /mnt/onboard/.adds/kobodeck /mnt/onboard/.kobo
 	cp /test/kobodeck.toml /mnt/onboard/.adds/kobodeck/kobodeck.toml ||
 		fail "install Kobodeck configuration"
 	sqlite3 /mnt/onboard/.kobo/KoboReader.sqlite </test/nickel-schema.sql ||
 		fail "create Nickel database"
 	touch "$nickel_status" || fail "create Nickel status file"
+}
+
+count_coverage_files() {
+	find "$coverage_dir" -maxdepth 1 -type f -name "$1" | wc -l
+}
+
+verify_coverage_files() {
+	stage=$1
+	minimum_counters=$2
+	waited=0
+	while :; do
+		metadata_count=$(count_coverage_files 'covmeta.*')
+		counter_count=$(count_coverage_files 'covcounters.*')
+		if [ "$metadata_count" -gt 0 ] && [ "$counter_count" -ge "$minimum_counters" ]; then
+			coverage_counter_count=$counter_count
+			return
+		fi
+		waited=$((waited + 1))
+		[ "$waited" -lt 10 ] ||
+			fail "coverage files missing after $stage: metadata=$metadata_count counters=$counter_count"
+		sleep 1
+	done
 }
 
 start_udev() {
@@ -112,6 +142,9 @@ verify_synchronization() {
 
 	grep -Fq 'usb plug add' "$nickel_status" || fail "Nickel add event is missing"
 	grep -Fq 'usb plug remove' "$nickel_status" || fail "Nickel remove event is missing"
+	if [ -n "$coverage_dir" ]; then
+		verify_coverage_files synchronization 1
+	fi
 }
 
 verify_uninstall() {
@@ -125,9 +158,16 @@ verify_uninstall() {
 		sleep 1
 	done
 	[ -s "$download" ] || fail "uninstall removed downloaded article"
+	if [ -n "$coverage_dir" ]; then
+		verify_coverage_files uninstall $((coverage_counter_count + 1))
+	fi
 }
 
 shutdown() {
+	if [ -n "$coverage_dir" ]; then
+		echo "KOBODECK_VM: syncing coverage data to onboard storage"
+		sync || fail "sync onboard storage"
+	fi
 	echo "KOBODECK_VM_PASS"
 	poweroff -f
 	fail "power off"
